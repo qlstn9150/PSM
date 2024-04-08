@@ -1,0 +1,214 @@
+---
+title: "THRA PSW"
+author: "Subeen Leem"
+date: "2024-04-08"
+output:
+  html_document:
+    highlight: textmate
+    theme: united
+    toc: yes  
+    toc_depth: 5
+    toc_float: yes
+  word_document:
+    toc: yes
+  pdf_document:
+    toc: yes
+---
+
+패키지/데이터 불러오기
+```{r message=FALSE}
+library(tableone)
+library(survey)
+library(moonBook)
+
+setwd('C:\\Users\\82103\\Desktop\\shim')
+data <- read.csv("THRA 240403.csv")
+```
+
+# 0. 데이터 탐색
+### 0-1. 데이터 전처리
+```{r}
+data <- data[c("Group5",
+          "ID",
+          "Gender",
+          "Age",
+          "PremorbidStatus.g",
+          "Traumatic",
+          "Underlying.disease.g",
+          "Dur.gaitdisturbance.days",
+          "Time.surgery.to.reh.days",
+          "Pre_Hipflex_PROM",
+          "Pre_Hipadd_PROM",
+          "Pre_HipER_PROM")]
+
+data <- na.omit(data)
+
+data$PremorbidStatus.g <- ifelse(data$PremorbidStatus.g=='Walking', 1, 0)
+data$Traumatic <- ifelse(data$Traumatic=='Traumatic', 1, 0)
+data$Underlying.disease.g <- as.factor(data$Underlying.disease.g)
+
+factorVars <- c("Group5",
+                "Gender",
+                "PremorbidStatus.g",
+                "Traumatic", 
+                "Underlying.disease.g")
+```
+
+### 0-3. 공변량
+```{r}
+vars <- c("Gender",
+          "Age",
+          "PremorbidStatus.g",
+          "Traumatic",
+          "Underlying.disease.g",
+          "Dur.gaitdisturbance.days",
+          "Time.surgery.to.reh.days",
+          "Pre_Hipflex_PROM",
+          "Pre_Hipadd_PROM",
+          "Pre_HipER_PROM")
+
+tableone <- CreateTableOne(strata = "Group5", 
+                               vars = vars,
+                               factorVars = factorVars,
+                               data = data)
+
+print(tableone, smd=T)
+```
+
+
+# 1. PSW by PremorbidStatus.g
+### 1-1. Before PSW
+```{r message=FALSE}
+vars <- c("Group5",
+          "Gender",
+          "Age",
+          "Traumatic",
+          "Underlying.disease.g",
+          "Dur.gaitdisturbance.days",
+          "Time.surgery.to.reh.days",
+          "Pre_Hipflex_PROM",
+          "Pre_Hipadd_PROM",
+          "Pre_HipER_PROM")
+
+tableone <- CreateTableOne(strata = "PremorbidStatus.g", 
+                               vars = vars,
+                               factorVars = factorVars,
+                               data = data)
+
+print(tableone, smd=T)
+```
+
+### 1-2. weight 생성
+```{r}
+reg <- glm(PremorbidStatus.g ~
+             Gender+
+             Age+
+             Traumatic++
+             relevel(Underlying.disease.g, ref="Fracture or Dislocation")+
+             Dur.gaitdisturbance.days+
+             Time.surgery.to.reh.days+
+             Pre_Hipflex_PROM+
+             Pre_Hipadd_PROM+
+             Pre_HipER_PROM,
+           family=binomial(),
+           data=data)
+
+data$pscore <- c(predict.glm(reg, type="response")) 
+prop <- sum(data$PremorbidStatus.g)/length(data$PremorbidStatus.g)
+data$sw <- ifelse(data$PremorbidStatus.g==1, prop/data$pscore, (1-prop)/(1-data$pscore))
+```
+
+
+### 1-3. After PSW
+```{r}
+svydes.sw <-svydesign(id = ~ID, 
+                      weights = ~sw, 
+                      strata = ~PremorbidStatus.g,
+                      data = data)
+svy.sw.tableone <- svyCreateTableOne(strata="PremorbidStatus.g",
+                                     vars = vars,
+                                     factorVars = factorVars, 
+                                     data = svydes.sw)
+print(svy.sw.tableone, smd=T)
+```
+
+# 2. PSW by Traumatic
+### 2-1. Before PSW
+```{r message=FALSE}
+vars <- c("Group5",
+          "Gender",
+          "Age",
+          "PremorbidStatus.g",
+          "Underlying.disease.g",
+          "Dur.gaitdisturbance.days",
+          "Time.surgery.to.reh.days",
+          "Pre_Hipflex_PROM",
+          "Pre_Hipadd_PROM",
+          "Pre_HipER_PROM")
+
+tableone <- CreateTableOne(strata = "Traumatic", 
+                               vars = vars,
+                               factorVars = factorVars,
+                               data = data)
+
+print(tableone, smd=T)
+```
+
+### 2-2. weight 생성
+```{r}
+reg <- glm(Traumatic ~
+             Gender+
+             Age+
+             PremorbidStatus.g++
+             relevel(Underlying.disease.g, ref="Fracture or Dislocation")+
+             Dur.gaitdisturbance.days+
+             Time.surgery.to.reh.days+
+             Pre_Hipflex_PROM+
+             Pre_Hipadd_PROM+
+             Pre_HipER_PROM,
+           family=binomial(),
+           data=data)
+
+data$pscore <- c(predict.glm(reg, type="response")) 
+prop <- sum(data$Traumatic)/length(data$Traumatic)
+data$sw <- ifelse(data$Traumatic==1, prop/data$pscore, (1-prop)/(1-data$pscore))
+```
+
+### 2-3. After PSW
+```{r message=FALSE}
+svydes.sw <-svydesign(id = ~ID, 
+                      weights = ~sw, 
+                      strata = ~Traumatic,
+                      data = data)
+
+svy.sw.tableone <- svyCreateTableOne(strata="Traumatic",
+                                     vars = vars,
+                                     factorVars = factorVars, 
+                                     data = svydes.sw)
+
+print(svy.sw.tableone, smd=T)
+```
+
+# 3. Logistic Regression After PSW
+```{r}
+svydes.sw <-svydesign(id = ~ID, 
+                      weights = ~sw, 
+                      strata = ~Group5,
+                      data = data)
+
+svy.reg <- svyglm(Group5 ~ 
+             Gender+
+             Age+
+             PremorbidStatus.g+
+             Traumatic++
+             relevel(Underlying.disease.g, ref="Fracture or Dislocation")+
+             Dur.gaitdisturbance.days+
+             Time.surgery.to.reh.days+
+             Pre_Hipflex_PROM+
+             Pre_Hipadd_PROM+
+             Pre_HipER_PROM,
+             design=svydes.sw)
+
+extractOR(svy.reg, digits=3)
+```
+
